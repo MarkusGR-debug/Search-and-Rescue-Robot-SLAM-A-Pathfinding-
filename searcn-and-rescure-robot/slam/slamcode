@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+from gaussian import Gaussian, plotGaussian
+import numpy as np
+from math import pi, sqrt, pow
+from matplotlib import pyplot as plt
+from drive_test_1 import*
+
+# Simplified covariance parameters (adjust with experimentation)
+sigmaPosition, sigmaOrientation, sigmaLandmarkPosition, sigmaLandmarkAngle = 0.01, 0.0001, 20000, 1000
+
+def calculateVelocities(measuredPoses, timeStep):
+    if timeStep == 0:
+       velocityX = 0
+       velocityY = 0
+       angularVelocity = 0
+    else:
+       xt = measuredPoses[timeStep].x()
+       yt = measuredPoses[timeStep].y()
+       theta_t = measuredPoses[timeStep].angle()
+       xt_minus_1 = measuredPoses[timeStep-1].x()
+       yt_minus_1 = measuredPoses[timeStep-1].y()
+       theta_t_minus_1 = measuredPoses[timeStep-1].angle()
+       velocityX = xt - xt_minus_1
+       velocityY = yt - yt_minus_1
+       angularVelocity = theta_t - theta_t_minus_1
+    return (velocityX, velocityY, angularVelocity)
+
+def predictState(currentState, measuredPoses, timeStep, transformationMatrix):
+    statePrediction = currentState
+    velocities = calculateVelocities(measuredPoses, timeStep)
+    motionModel = np.array(velocities)
+    transformedMotion = np.matmul(transformationMatrix.T, motionModel)
+    statePrediction += transformedMotion
+    return statePrediction
+                        
+# Initialize the transformation matrix (Fx)
+transformationMatrix = np.eye(3)
+
+# Initial robot state
+robotState = np.array([0.0, 0.0, 0.0])
+stateCovariance = np.eye(3) * 100.0
+
+# Initial noise variances
+motionNoiseCovariance = np.diag([sigmaPosition, sigmaPosition, sigmaOrientation])
+measurementNoiseCovariance = np.diag([sigmaLandmarkPosition, sigmaLandmarkPosition, sigmaLandmarkAngle])
+
+numDataPoints = len(robotFrames)
+robotPoseDict = dict(robotFrames)
+landmarkPoseDict = dict(cubeFrames)
+timeSteps = np.linspace(0, numDataPoints-1, numDataPoints)
+landmarkObservations = np.zeros((numDataPoints, 3))
+stateEstimates = np.zeros((numDataPoints, 3))
+stateCovariances = np.zeros((numDataPoints, 3))
+
+currentTimeStep = 0
+for timestamp, frame in robotFrames:
+   # State Prediction
+   predictedState = predictState(robotState, robotPoseDict, timestamp, transformationMatrix)
+   stateJacobian = np.eye(robotState.size) # Linearization around current state
+   stateCovariance = stateJacobian @ stateCovariance @ stateJacobian.T + (transformationMatrix.T @ motionNoiseCovariance @ transformationMatrix)
+        
+   # Observation available?
+   if timestamp in landmarkPoseDict:
+      # Landmark Initialization
+      if timestamp in landmarkPoseDict and robotState.size == 3:
+         transformationMatrix = np.append(transformationMatrix, np.zeros((3, 3)), axis=1)
+         # Initialize landmark estimate
+         initLandmarkX = robotState[0] + landmarkPoseDict[timestamp].x() - frame.x()
+         initLandmarkY = robotState[1] + landmarkPoseDict[timestamp].y() - frame.y()
+         initLandmarkTheta = robotState[2] + landmarkPoseDict[timestamp].angle() - frame.angle()
+         predictedState = np.append(predictedState, [initLandmarkX, initLandmarkY, initLandmarkTheta])
+         stateCovariance.resize((motionNoiseCovariance.shape[0]+3, motionNoiseCovariance.shape[1]+3))
+         stateCovariance[-1, -1] = sigmaOrientation
+         stateCovariance[-2, -2] = sigmaPosition
+         stateCovariance[-3, -3] = sigmaPosition
+
+      # State Update
+      landmarkMeasurement = np.array([landmarkPoseDict[timestamp].x(), landmarkPoseDict[timestamp].y(), landmarkPoseDict[timestamp].angle()])
+      predictedMeasurementDiff = predictedState[3:] - predictedState[:3]
+      landmarkTransformationMatrix = np.roll(transformationMatrix, 3, 1)
+      landmarkTransformationMatrix = np.vstack((transformationMatrix, landmarkTransformationMatrix))
+      landmarkJacobian = np.append(-np.eye(3), np.eye(3), axis=1) @ landmarkTransformationMatrix
+      predictedMeasurementCovariance = landmarkJacobian @ stateCovariance @ landmarkJacobian.T + measurementNoiseCovariance
+      # Kalman Gain
+      kalmanGain = stateCovariance @ landmarkJacobian.T @ np.linalg.inv(predictedMeasurementCovariance)
+      robotState = predictedState + kalmanGain @ (landmarkMeasurement - predictedMeasurementDiff)
+   else:
+      robotState = predictedState
+   # Covariance Update
+   stateCovariance = (np.identity(robotState.size) - kalmanGain @ landmarkJacobian) @ stateCovariance
+
+   landmarkObservations[currentTimeStep] = landmarkMeasurement
+   stateEstimates[currentTimeStep, :2] = robotState[:2]
+   stateCovariances[currentTimeStep, :2] = stateCovariance[0, 0], stateCovariance[1, 1]
+   currentTimeStep += 1
+   
+   
+plt.plot(tValues,lmValues[:,0])
+plt.plot(tValues,lmValues[:,1])
+plt.plot(tValues,estimateValues[:,0])
+plt.plot(tValues,estimateValues[:,1])
+plt.show()
