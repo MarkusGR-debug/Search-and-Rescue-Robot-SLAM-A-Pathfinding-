@@ -24,7 +24,7 @@ This repository showcases a university project using the Anki Cozmo robot in a s
 
 ## 🧾 Reports
 
-Find the full write-up in [`docs/`](./docs/):
+Find the full write-up in [`docs/`](searcn-and-rescure-robot/docs):
 - **Search And Rescue Report** – complete project methodology, results, and analysis.
 - **Robot Sensors Report** – exploration of sensor limitations and calibration techniques.
 
